@@ -18,16 +18,18 @@ async function extractDocumentData(base64Content, mimeType, documentType) {
 
   const prompt = typePrompts[documentType] || 'Extract all relevant financial data from this document.';
 
+  const isPdf = mimeType === 'application/pdf';
+  const contentBlock = isPdf
+    ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64Content } }
+    : { type: 'image', source: { type: 'base64', media_type: mimeType, data: base64Content } };
+
   const response = await anthropic.messages.create({
     model: 'claude-haiku-4-5-20251001',
     max_tokens: 2000,
     messages: [{
       role: 'user',
       content: [
-        {
-          type: 'image',
-          source: { type: 'base64', media_type: mimeType, data: base64Content },
-        },
+        contentBlock,
         {
           type: 'text',
           text: `You are a financial document processor. ${prompt}
@@ -62,16 +64,18 @@ Return your response as JSON with the following structure:
 
 // Process bank statement into structured entries
 async function processBankStatement(base64Content, mimeType) {
+  const isPdf = mimeType === 'application/pdf';
+  const contentBlock = isPdf
+    ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64Content } }
+    : { type: 'image', source: { type: 'base64', media_type: mimeType, data: base64Content } };
+
   const response = await anthropic.messages.create({
     model: 'claude-haiku-4-5-20251001',
     max_tokens: 4000,
     messages: [{
       role: 'user',
       content: [
-        {
-          type: 'image',
-          source: { type: 'base64', media_type: mimeType, data: base64Content },
-        },
+        contentBlock,
         {
           type: 'text',
           text: `Extract all transactions from this bank statement. Return JSON:
