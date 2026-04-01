@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { api } from '../../services/api';
 
-export default function CompanySelector({ value, onChange, showCurrency = false, currencyValue, onCurrencyChange }) {
+export default function CompanySelector({ value, onChange, showCurrency = false, currencyValue, currencyAccountId, onCurrencyChange }) {
+  const selectedCurrency = currencyValue || currencyAccountId || '';
   const [companies, setCompanies] = useState([]);
   const [currencies, setCurrencies] = useState([]);
 
@@ -30,7 +31,7 @@ export default function CompanySelector({ value, onChange, showCurrency = false,
       {showCurrency && value && (
         <div style={{ width: 120 }}>
           <label style={{ display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 4, color: '#444' }}>Currency</label>
-          <select value={currencyValue || ''} onChange={(e) => onCurrencyChange(e.target.value)}
+          <select value={selectedCurrency} onChange={(e) => onCurrencyChange(e.target.value)}
             style={{ width: '100%', padding: '8px 12px', border: '1px solid #ddd', borderRadius: 4, fontSize: 14 }}>
             <option value="">Select...</option>
             {currencies.map(ca => (
