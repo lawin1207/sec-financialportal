@@ -11,10 +11,10 @@ export default function CompanySelector({ value, onChange, showCurrency = false,
   }, []);
 
   useEffect(() => {
-    if (value && showCurrency) {
+    if (value) {
       api.getCurrencyAccounts(value).then(d => setCurrencies(d.accounts)).catch(() => {});
     }
-  }, [value, showCurrency]);
+  }, [value]);
 
   return (
     <div style={{ display: 'flex', gap: 12 }}>

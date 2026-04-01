@@ -92,7 +92,6 @@ const UploadPage = () => {
         status: result.status || 'uploaded',
       });
       setFile(null);
-      setDocumentType('');
       setCurrencyAccountId(null);
       // Reset file inputs
       if (fileInputRef.current) fileInputRef.current.value = '';
