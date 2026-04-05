@@ -1,157 +1,119 @@
 import React, { useState, useRef } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { api } from '../../services/api';
-import CompanySelector from '../../components/common/CompanySelector';
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
 
-const OWNER_DOCUMENT_TYPES = [
-  { value: 'bank_statement', label: 'Bank Statement' },
-  { value: 'settlement_statement', label: 'Settlement Statement' },
-  { value: 'exchange_receipt', label: 'Exchange Receipt' },
-  { value: 'purchase_order', label: 'Purchase Order' },
-  { value: 'delivery_order', label: 'Delivery Order' },
-  { value: 'invoice', label: 'Invoice' },
-];
-
-const ADMIN_DOCUMENT_TYPES = [
-  { value: 'purchase_order', label: 'Purchase Order' },
-  { value: 'delivery_order', label: 'Delivery Order' },
-  { value: 'invoice', label: 'Invoice' },
-];
-
-const CURRENCY_TYPES = ['bank_statement', 'settlement_statement', 'exchange_receipt'];
+const DOC_TYPE_LABELS = {
+  purchase_order: 'Purchase Order',
+  delivery_order: 'Delivery Order',
+  invoice: 'Invoice',
+  bank_statement: 'Bank Statement',
+  settlement_statement: 'Settlement Statement',
+  exchange_receipt: 'Exchange Receipt',
+};
 
 const UploadPage = () => {
   const { user } = useAuth();
-  const [companyId, setCompanyId] = useState(null);
-  const [currencyAccountId, setCurrencyAccountId] = useState(null);
-  const [documentType, setDocumentType] = useState('');
-  const [file, setFile] = useState(null);
+  const [files, setFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
-  const [success, setSuccess] = useState(null);
+  const [results, setResults] = useState([]);
   const [error, setError] = useState(null);
 
   const fileInputRef = useRef(null);
   const cameraInputRef = useRef(null);
 
-  const isOwner = user?.role === 'owner';
-  const documentTypes = isOwner ? OWNER_DOCUMENT_TYPES : ADMIN_DOCUMENT_TYPES;
-  const showCurrency = CURRENCY_TYPES.includes(documentType);
-
   const handleFileChange = (e) => {
-    const selected = e.target.files[0];
-    if (!selected) {
-      setFile(null);
-      return;
+    const selected = Array.from(e.target.files || []);
+    const valid = [];
+    for (const f of selected) {
+      if (f.size > MAX_FILE_SIZE) {
+        setError(`${f.name} exceeds 20MB limit.`);
+        continue;
+      }
+      valid.push(f);
     }
-    if (selected.size > MAX_FILE_SIZE) {
-      setError('File size exceeds 20MB limit.');
-      setFile(null);
-      return;
+    if (valid.length > 0) {
+      setFiles(prev => [...prev, ...valid]);
+      setError(null);
     }
-    setError(null);
-    setFile(selected);
+  };
+
+  const removeFile = (index) => {
+    setFiles(prev => prev.filter((_, i) => i !== index));
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (files.length === 0) {
+      setError('Please select at least one file.');
+      return;
+    }
+
     setError(null);
-    setSuccess(null);
+    setUploading(true);
+    setResults([]);
 
-    if (!companyId) {
-      setError('Please select a company.');
-      return;
-    }
-    if (!documentType) {
-      setError('Please select a document type.');
-      return;
-    }
-    if (!file) {
-      setError('Please select a file to upload.');
-      return;
-    }
-    if (showCurrency && !currencyAccountId) {
-      setError('Please select a currency account.');
-      return;
-    }
-
-    try {
-      setUploading(true);
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('company_id', companyId);
-      formData.append('document_type', documentType);
-      if (currencyAccountId) {
-        formData.append('currency_account_id', currencyAccountId);
+    const uploadResults = [];
+    for (const file of files) {
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        const result = await api.smartUpload(formData);
+        uploadResults.push({
+          fileName: file.name,
+          success: true,
+          classification: result.ai_classification,
+          document: result.document,
+        });
+      } catch (err) {
+        uploadResults.push({
+          fileName: file.name,
+          success: false,
+          error: err.message || 'Upload failed',
+        });
       }
-
-      const result = await api.uploadDocument(formData);
-      setSuccess({
-        fileName: file.name,
-        status: result.status || 'uploaded',
-      });
-      setFile(null);
-      setCurrencyAccountId(null);
-      // Reset file inputs
-      if (fileInputRef.current) fileInputRef.current.value = '';
-      if (cameraInputRef.current) cameraInputRef.current.value = '';
-    } catch (err) {
-      setError(err.response?.data?.error || 'Upload failed. Please try again.');
-    } finally {
-      setUploading(false);
     }
+
+    setResults(uploadResults);
+    setFiles([]);
+    setUploading(false);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (cameraInputRef.current) cameraInputRef.current.value = '';
   };
 
   return (
     <div style={styles.container}>
-      <h1 style={styles.title}>Upload Document</h1>
+      <h1 style={styles.title}>Upload Documents</h1>
+      <p style={styles.subtitle}>Just upload your files. AI will automatically detect the document type, company, and currency.</p>
 
       <div style={styles.card}>
         <form onSubmit={handleSubmit}>
-          <div style={styles.formGroup}>
-            <label style={styles.label}>Company</label>
-            <CompanySelector
-              value={companyId}
-              onChange={(id) => {
-                setCompanyId(id);
-                setCurrencyAccountId(null);
-              }}
-              showCurrency={showCurrency}
-              onCurrencyChange={setCurrencyAccountId}
-              currencyAccountId={currencyAccountId}
-            />
-          </div>
+          <div style={styles.uploadZone}>
+            <div style={styles.uploadIcon}>&#128195;</div>
+            <p style={styles.uploadText}>Choose files or take a photo</p>
+            <p style={styles.uploadHint}>AI will classify each document automatically</p>
 
-          <div style={styles.formGroup}>
-            <label style={styles.label}>Document Type</label>
-            <select
-              style={styles.select}
-              value={documentType}
-              onChange={(e) => {
-                setDocumentType(e.target.value);
-                setCurrencyAccountId(null);
-              }}
-            >
-              <option value="">Select document type</option>
-              {documentTypes.map((dt) => (
-                <option key={dt.value} value={dt.value}>
-                  {dt.label}
-                </option>
-              ))}
-            </select>
-          </div>
+            <div style={styles.buttonRow}>
+              <label style={styles.chooseButton}>
+                Choose Files
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".pdf,.png,.jpg,.jpeg,.csv"
+                  multiple
+                  onChange={handleFileChange}
+                  style={{ display: 'none' }}
+                />
+              </label>
 
-          <div style={styles.formGroup}>
-            <label style={styles.label}>File</label>
-            <div style={styles.fileActions}>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".pdf,.png,.jpg,.jpeg,.csv"
-                onChange={handleFileChange}
-                style={styles.fileInput}
-              />
+              <button
+                type="button"
+                onClick={() => cameraInputRef.current?.click()}
+                style={styles.cameraButton}
+              >
+                &#128247; Take Photo
+              </button>
               <input
                 ref={cameraInputRef}
                 type="file"
@@ -160,145 +122,145 @@ const UploadPage = () => {
                 onChange={handleFileChange}
                 style={{ display: 'none' }}
               />
-              <button
-                type="button"
-                onClick={() => cameraInputRef.current?.click()}
-                style={styles.cameraButton}
-              >
-                <span style={{ marginRight: '6px', fontSize: '18px' }}>&#128247;</span>
-                Take Photo
-              </button>
             </div>
-            {file && (
-              <p style={styles.fileName}>Selected: {file.name}</p>
-            )}
-            <p style={styles.hint}>Accepted: PDF, PNG, JPG, JPEG, CSV (max 20MB)</p>
+            <p style={styles.hint}>Accepted: PDF, PNG, JPG, JPEG, CSV (max 20MB each)</p>
           </div>
 
-          {error && <div style={styles.error}>{error}</div>}
-
-          {success && (
-            <div style={styles.success}>
-              File <strong>{success.fileName}</strong> uploaded successfully.
-              Status: <strong>{success.status}</strong>
+          {files.length > 0 && (
+            <div style={styles.fileList}>
+              <h3 style={styles.fileListTitle}>Files to upload ({files.length})</h3>
+              {files.map((f, i) => (
+                <div key={i} style={styles.fileItem}>
+                  <span style={styles.fileItemName}>{f.name}</span>
+                  <span style={styles.fileItemSize}>{(f.size / 1024).toFixed(0)} KB</span>
+                  <button type="button" onClick={() => removeFile(i)} style={styles.removeButton}>X</button>
+                </div>
+              ))}
             </div>
           )}
+
+          {error && <div style={styles.error}>{error}</div>}
 
           <button
             type="submit"
             style={{
-              ...styles.button,
-              opacity: uploading ? 0.6 : 1,
-              cursor: uploading ? 'not-allowed' : 'pointer',
+              ...styles.submitButton,
+              opacity: uploading || files.length === 0 ? 0.6 : 1,
+              cursor: uploading || files.length === 0 ? 'not-allowed' : 'pointer',
             }}
-            disabled={uploading}
+            disabled={uploading || files.length === 0}
           >
-            {uploading ? 'Uploading...' : 'Upload Document'}
+            {uploading ? 'Uploading & Classifying...' : `Upload ${files.length > 0 ? files.length + ' ' : ''}Document${files.length !== 1 ? 's' : ''}`}
           </button>
         </form>
       </div>
+
+      {results.length > 0 && (
+        <div style={styles.resultsCard}>
+          <h2 style={styles.resultsTitle}>Upload Results</h2>
+          {results.map((r, i) => (
+            <div key={i} style={{ ...styles.resultItem, borderLeft: `4px solid ${r.success ? '#10b981' : '#ef4444'}` }}>
+              <div style={styles.resultHeader}>
+                <span style={{ ...styles.resultStatus, color: r.success ? '#10b981' : '#ef4444' }}>
+                  {r.success ? 'Success' : 'Failed'}
+                </span>
+                <span style={styles.resultFileName}>{r.fileName}</span>
+              </div>
+              {r.success && r.classification && (
+                <div style={styles.resultDetails}>
+                  <div style={styles.resultTag}>
+                    <span style={styles.tagLabel}>Type:</span>
+                    <span style={styles.tagValue}>{DOC_TYPE_LABELS[r.classification.document_type] || r.classification.document_type}</span>
+                  </div>
+                  <div style={styles.resultTag}>
+                    <span style={styles.tagLabel}>Company:</span>
+                    <span style={styles.tagValue}>{r.classification.detected_company}</span>
+                  </div>
+                  <div style={styles.resultTag}>
+                    <span style={styles.tagLabel}>Currency:</span>
+                    <span style={styles.tagValue}>{r.classification.currency}</span>
+                  </div>
+                  <div style={styles.resultTag}>
+                    <span style={styles.tagLabel}>Confidence:</span>
+                    <span style={styles.tagValue}>{Math.round((r.classification.confidence || 0) * 100)}%</span>
+                  </div>
+                </div>
+              )}
+              {!r.success && <p style={styles.resultError}>{r.error}</p>}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 };
 
 const styles = {
-  container: {
-    color: '#1a1f36',
-  },
-  title: {
-    fontSize: '28px',
-    fontWeight: '700',
-    color: '#1a1f36',
-    marginBottom: '24px',
-  },
+  container: { color: '#1a1f36' },
+  title: { fontSize: '28px', fontWeight: '700', color: '#1a1f36', marginBottom: '4px' },
+  subtitle: { fontSize: '14px', color: '#6b7280', marginBottom: '24px' },
   card: {
-    backgroundColor: '#fff',
-    borderRadius: '12px',
-    padding: '32px',
-    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.08)',
-    maxWidth: '600px',
+    backgroundColor: '#fff', borderRadius: '12px', padding: '32px',
+    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.08)', maxWidth: '700px',
   },
-  formGroup: {
-    marginBottom: '20px',
+  uploadZone: {
+    border: '2px dashed #d1d5db', borderRadius: '12px', padding: '40px 20px',
+    textAlign: 'center', marginBottom: '20px', backgroundColor: '#f9fafb',
   },
-  label: {
-    display: 'block',
-    fontSize: '14px',
-    fontWeight: '600',
-    color: '#374151',
-    marginBottom: '6px',
-  },
-  select: {
-    width: '100%',
-    padding: '10px 12px',
-    fontSize: '14px',
-    border: '1px solid #d1d5db',
-    borderRadius: '6px',
-    backgroundColor: '#fff',
-    color: '#1a1f36',
-    outline: 'none',
-  },
-  fileActions: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '12px',
-    flexWrap: 'wrap',
-  },
-  fileInput: {
-    fontSize: '14px',
-    color: '#374151',
+  uploadIcon: { fontSize: '48px', marginBottom: '8px' },
+  uploadText: { fontSize: '16px', fontWeight: '600', color: '#374151', marginBottom: '4px' },
+  uploadHint: { fontSize: '13px', color: '#9ca3af', marginBottom: '16px' },
+  buttonRow: { display: 'flex', justifyContent: 'center', gap: '12px', marginBottom: '12px', flexWrap: 'wrap' },
+  chooseButton: {
+    display: 'inline-flex', alignItems: 'center', backgroundColor: '#3b82f6', color: '#fff',
+    border: 'none', borderRadius: '6px', padding: '10px 20px', fontSize: '14px',
+    fontWeight: '600', cursor: 'pointer',
   },
   cameraButton: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    backgroundColor: '#10b981',
-    color: '#fff',
-    border: 'none',
-    borderRadius: '6px',
-    padding: '8px 16px',
-    fontSize: '14px',
-    fontWeight: '600',
-    cursor: 'pointer',
-    whiteSpace: 'nowrap',
+    display: 'inline-flex', alignItems: 'center', backgroundColor: '#10b981', color: '#fff',
+    border: 'none', borderRadius: '6px', padding: '10px 20px', fontSize: '14px',
+    fontWeight: '600', cursor: 'pointer',
   },
-  fileName: {
-    fontSize: '13px',
-    color: '#3b82f6',
-    marginTop: '6px',
-    marginBottom: 0,
-    fontWeight: '500',
+  hint: { fontSize: '12px', color: '#9ca3af', margin: 0 },
+  fileList: { marginBottom: '20px' },
+  fileListTitle: { fontSize: '14px', fontWeight: '600', color: '#374151', marginBottom: '8px' },
+  fileItem: {
+    display: 'flex', alignItems: 'center', gap: '12px', padding: '8px 12px',
+    backgroundColor: '#f3f4f6', borderRadius: '6px', marginBottom: '4px', fontSize: '14px',
   },
-  hint: {
-    fontSize: '12px',
-    color: '#6b7280',
-    marginTop: '4px',
-    marginBottom: 0,
+  fileItemName: { flex: 1, color: '#1f2937', fontWeight: '500' },
+  fileItemSize: { color: '#6b7280', fontSize: '12px' },
+  removeButton: {
+    background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer',
+    fontWeight: '700', fontSize: '14px', padding: '2px 6px',
   },
   error: {
-    backgroundColor: '#fef2f2',
-    color: '#dc2626',
-    padding: '12px',
-    borderRadius: '6px',
-    fontSize: '14px',
-    marginBottom: '16px',
+    backgroundColor: '#fef2f2', color: '#dc2626', padding: '12px',
+    borderRadius: '6px', fontSize: '14px', marginBottom: '16px',
   },
-  success: {
-    backgroundColor: '#f0fdf4',
-    color: '#16a34a',
-    padding: '12px',
-    borderRadius: '6px',
-    fontSize: '14px',
-    marginBottom: '16px',
+  submitButton: {
+    width: '100%', backgroundColor: '#3b82f6', color: '#fff', border: 'none',
+    borderRadius: '8px', padding: '14px 24px', fontSize: '16px', fontWeight: '600',
   },
-  button: {
-    backgroundColor: '#3b82f6',
-    color: '#fff',
-    border: 'none',
-    borderRadius: '6px',
-    padding: '12px 24px',
-    fontSize: '14px',
-    fontWeight: '600',
+  resultsCard: {
+    backgroundColor: '#fff', borderRadius: '12px', padding: '24px',
+    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.08)', maxWidth: '700px', marginTop: '24px',
   },
+  resultsTitle: { fontSize: '20px', fontWeight: '700', color: '#1a1f36', marginBottom: '16px' },
+  resultItem: {
+    padding: '16px', backgroundColor: '#f9fafb', borderRadius: '8px', marginBottom: '12px',
+  },
+  resultHeader: { display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' },
+  resultStatus: { fontWeight: '700', fontSize: '14px' },
+  resultFileName: { fontWeight: '500', color: '#374151', fontSize: '14px' },
+  resultDetails: { display: 'flex', flexWrap: 'wrap', gap: '12px' },
+  resultTag: {
+    display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: '#e0e7ff',
+    borderRadius: '4px', padding: '4px 10px', fontSize: '13px',
+  },
+  tagLabel: { color: '#6366f1', fontWeight: '600' },
+  tagValue: { color: '#312e81' },
+  resultError: { color: '#ef4444', fontSize: '13px', margin: '4px 0 0 0' },
 };
 
 export default UploadPage;

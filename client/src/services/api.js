@@ -59,6 +59,7 @@ class ApiService {
   getDocument(id) { return this.get(`/documents/${id}`); }
   getDocumentDownloadUrl(id) { return this.get(`/documents/${id}/download`); }
   uploadDocument(formData) { return this.post('/documents/upload', formData); }
+  smartUpload(formData) { return this.post('/documents/smart-upload', formData); }
   updateDocument(id, data) { return this.put(`/documents/${id}`, data); }
 
   getMatches(params) {

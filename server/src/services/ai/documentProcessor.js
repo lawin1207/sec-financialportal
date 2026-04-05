@@ -221,9 +221,71 @@ Provide your analysis as JSON:
   return { suggestion: 'Unable to determine', confidence: 0, reasoning: 'AI processing failed' };
 }
 
+// Smart classify: detect document type, company, and extract data in one call
+async function classifyAndExtract(base64Content, mimeType) {
+  const isPdf = mimeType === 'application/pdf';
+  const contentBlock = isPdf
+    ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64Content } }
+    : { type: 'image', source: { type: 'base64', media_type: mimeType, data: base64Content } };
+
+  const response = await anthropic.messages.create({
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 4000,
+    messages: [{
+      role: 'user',
+      content: [
+        contentBlock,
+        {
+          type: 'text',
+          text: `You are a financial document processor for two companies:
+1. Sian Soon Enterprise Company (SSE)
+2. Sian Soon Manufacturing Sdn Bhd (SSM)
+
+Analyze this document and determine:
+1. Document type (one of: purchase_order, delivery_order, invoice, bank_statement, settlement_statement, exchange_receipt)
+2. Which company it belongs to
+3. Extract all relevant data
+
+Return JSON:
+{
+  "document_type": "purchase_order" | "delivery_order" | "invoice" | "bank_statement" | "settlement_statement" | "exchange_receipt",
+  "detected_company": "Sian Soon Enterprise Company" | "Sian Soon Manufacturing Sdn Bhd" | "unknown",
+  "confidence": 0.0 to 1.0,
+  "currency": "RM" | "CAD" | "USD" | "AUD" | "EUR",
+  "extracted_data": {
+    "supplier_name": "...",
+    "document_number": "...",
+    "date": "YYYY-MM-DD",
+    "total_amount": number,
+    "currency": "...",
+    "items": [...],
+    "entries": [{"date":"YYYY-MM-DD","description":"...","type":"debit"|"credit","amount":number,"balance":number}]
+  }
+}
+
+For bank statements, include the "entries" array with all transactions.
+For PO/DO/Invoice, include supplier_name, document_number, date, total_amount, items.
+For settlement statements, include auction house, items sold.
+For exchange receipts, include original/converted amounts and exchange rate.`,
+        },
+      ],
+    }],
+  });
+
+  try {
+    const text = response.content[0].text;
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) return JSON.parse(jsonMatch[0]);
+  } catch (e) {
+    console.error('Failed to parse AI classification response:', e);
+  }
+  return { document_type: 'invoice', detected_company: 'unknown', confidence: 0, currency: 'RM', extracted_data: {} };
+}
+
 module.exports = {
   extractDocumentData,
   processBankStatement,
   autoMatchDocuments,
   investigateMismatch,
+  classifyAndExtract,
 };

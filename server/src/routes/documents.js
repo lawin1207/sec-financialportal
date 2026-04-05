@@ -3,7 +3,7 @@ const multer = require('multer');
 const { pool } = require('../config/database');
 const { authenticate, authorize, requirePasswordReentry } = require('../middleware/auth');
 const { uploadFile, getSignedDownloadUrl, buildS3Key } = require('../services/s3');
-const { extractDocumentData, processBankStatement } = require('../services/ai/documentProcessor');
+const { extractDocumentData, processBankStatement, classifyAndExtract } = require('../services/ai/documentProcessor');
 const { logAction } = require('../services/auditLog');
 
 const router = express.Router();
@@ -222,6 +222,121 @@ async function processDocumentAsync(docId, fileBuffer, mimeType, documentType, s
     await pool.query("UPDATE documents SET status = 'error' WHERE id = $1", [docId]);
   }
 }
+
+// POST /api/documents/smart-upload - AI auto-classifies and uploads
+router.post('/smart-upload', authenticate, authorize('owner', 'admin'), upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+  try {
+    // Step 1: AI classifies the document
+    const base64 = req.file.buffer.toString('base64');
+    const aiResult = await classifyAndExtract(base64, req.file.mimetype);
+
+    const documentType = aiResult.document_type;
+    const detectedCompany = aiResult.detected_company;
+    const currency = aiResult.currency || 'RM';
+
+    // Enforce role-based upload restrictions
+    const ownerOnlyTypes = ['bank_statement', 'settlement_statement', 'exchange_receipt'];
+    if (ownerOnlyTypes.includes(documentType) && req.user.role !== 'owner') {
+      return res.status(403).json({ error: `Only the owner can upload ${documentType.replace(/_/g, ' ')}` });
+    }
+
+    // Step 2: Find the matching company
+    let companyId;
+    const { rows: companies } = await pool.query('SELECT id, name, short_code FROM companies ORDER BY name');
+    const matchedCompany = companies.find(c => c.name === detectedCompany);
+    companyId = matchedCompany?.id || companies[0]?.id;
+    const shortCode = matchedCompany?.short_code || companies[0]?.short_code;
+
+    // Step 3: Find currency account
+    let currencyAccountId = null;
+    if (['bank_statement', 'settlement_statement', 'exchange_receipt'].includes(documentType)) {
+      const { rows: currAccts } = await pool.query(
+        'SELECT id FROM currency_accounts WHERE company_id = $1 AND currency = $2',
+        [companyId, currency]
+      );
+      currencyAccountId = currAccts[0]?.id || null;
+    }
+
+    // Step 4: Upload to S3
+    const s3Key = buildS3Key(shortCode, documentType, req.file.originalname);
+    await uploadFile(req.file.buffer, s3Key, req.file.mimetype);
+
+    // Step 5: Insert document record
+    const extractedData = aiResult.extracted_data || {};
+    const { rows: docs } = await pool.query(
+      `INSERT INTO documents (company_id, currency_account_id, document_type, file_name, file_path, file_size, mime_type, uploaded_by,
+        status, extracted_data, ai_detected_company, document_number, supplier_name, amount, currency, document_date, processed_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW()) RETURNING *`,
+      [
+        companyId, currencyAccountId, documentType, req.file.originalname, s3Key, req.file.size, req.file.mimetype, req.user.id,
+        'processed',
+        JSON.stringify(extractedData),
+        detectedCompany,
+        extractedData.document_number || extractedData.invoice_number || extractedData.po_number || extractedData.do_number || null,
+        extractedData.supplier_name || null,
+        extractedData.total_amount || extractedData.amount || null,
+        currency,
+        extractedData.date || null,
+      ]
+    );
+
+    const doc = docs[0];
+
+    // Step 6: Process bank statement entries
+    if (documentType === 'bank_statement' && extractedData.entries?.length > 0) {
+      for (const entry of extractedData.entries) {
+        await pool.query(
+          `INSERT INTO bank_statement_entries (document_id, company_id, currency_account_id, entry_date, description, entry_type, amount, balance, currency)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          [doc.id, companyId, currencyAccountId, entry.date, entry.description, entry.type, entry.amount, entry.balance, currency]
+        );
+      }
+    }
+
+    // Step 7: Check company mismatch
+    const { rows: allCompanies } = await pool.query('SELECT name FROM companies WHERE id = $1', [companyId]);
+    if (detectedCompany !== 'unknown' && detectedCompany !== allCompanies[0]?.name) {
+      await pool.query("UPDATE documents SET status = 'flagged', company_mismatch = true WHERE id = $1", [doc.id]);
+      const { rows: owners } = await pool.query("SELECT id FROM users WHERE role = 'owner'");
+      for (const owner of owners) {
+        await pool.query(
+          `INSERT INTO alerts (user_id, alert_type, title, message, reference_id, reference_type)
+           VALUES ($1, 'company_mismatch', $2, $3, $4, 'document')`,
+          [owner.id, 'Company mismatch detected',
+           `Document detected as "${detectedCompany}" but classified under "${allCompanies[0]?.name}"`,
+           doc.id]
+        );
+      }
+    }
+
+    // Step 8: Log the upload
+    await logAction({
+      userId: req.user.id,
+      userName: req.user.displayName,
+      actionType: 'UPLOAD',
+      recordType: 'document',
+      recordId: doc.id,
+      recordDescription: `${documentType} - ${req.file.originalname}`,
+      afterValue: { document_type: documentType, file_name: req.file.originalname, company_id: companyId, ai_classified: true },
+      ipAddress: req.ip,
+    });
+
+    res.status(201).json({
+      document: doc,
+      ai_classification: {
+        document_type: documentType,
+        detected_company: detectedCompany,
+        currency,
+        confidence: aiResult.confidence,
+      },
+    });
+  } catch (err) {
+    console.error('Smart upload error:', err);
+    res.status(500).json({ error: 'Upload failed: ' + (err.message || 'Server error') });
+  }
+});
 
 // PUT /api/documents/:id - Update document (requires password re-entry)
 router.put('/:id', authenticate, authorize('owner', 'admin'), requirePasswordReentry, async (req, res) => {
