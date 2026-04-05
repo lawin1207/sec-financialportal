@@ -39,6 +39,9 @@ const DocumentsPage = () => {
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const [previewUrl, setPreviewUrl] = useState(null);
+  const [previewName, setPreviewName] = useState('');
+  const [previewType, setPreviewType] = useState('');
 
   useEffect(() => {
     const fetchDocuments = async () => {
@@ -72,6 +75,23 @@ const DocumentsPage = () => {
     } catch (err) {
       console.error('Failed to get download URL:', err);
     }
+  };
+
+  const handlePreview = async (doc) => {
+    try {
+      const { url } = await api.getDocumentDownloadUrl(doc.id);
+      setPreviewUrl(url);
+      setPreviewName(doc.file_name);
+      setPreviewType(doc.mime_type || '');
+    } catch (err) {
+      console.error('Failed to get preview URL:', err);
+    }
+  };
+
+  const closePreview = () => {
+    setPreviewUrl(null);
+    setPreviewName('');
+    setPreviewType('');
   };
 
   const handleFilterChange = () => {
@@ -187,12 +207,20 @@ const DocumentsPage = () => {
                           : '-'}
                       </td>
                       <td style={styles.td}>
-                        <button
-                          style={styles.downloadButton}
-                          onClick={() => handleDownload(doc.id)}
-                        >
-                          Download
-                        </button>
+                        <div style={{ display: 'flex', gap: '6px' }}>
+                          <button
+                            style={styles.previewButton}
+                            onClick={() => handlePreview(doc)}
+                          >
+                            Preview
+                          </button>
+                          <button
+                            style={styles.downloadButton}
+                            onClick={() => handleDownload(doc.id)}
+                          >
+                            Download
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -230,6 +258,24 @@ const DocumentsPage = () => {
           </>
         )}
       </div>
+
+      {previewUrl && (
+        <div style={styles.modalOverlay} onClick={closePreview}>
+          <div style={styles.modalContent} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.modalHeader}>
+              <span style={styles.modalTitle}>{previewName}</span>
+              <button style={styles.modalClose} onClick={closePreview}>X</button>
+            </div>
+            <div style={styles.modalBody}>
+              {previewType?.startsWith('image/') ? (
+                <img src={previewUrl} alt={previewName} style={styles.previewImage} />
+              ) : (
+                <iframe src={previewUrl} title={previewName} style={styles.previewIframe} />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -322,6 +368,16 @@ const styles = {
     marginTop: '4px',
     fontWeight: '500',
   },
+  previewButton: {
+    backgroundColor: '#8b5cf6',
+    color: '#fff',
+    border: 'none',
+    borderRadius: '4px',
+    padding: '6px 14px',
+    fontSize: '13px',
+    fontWeight: '500',
+    cursor: 'pointer',
+  },
   downloadButton: {
     backgroundColor: '#3b82f6',
     color: '#fff',
@@ -332,6 +388,28 @@ const styles = {
     fontWeight: '500',
     cursor: 'pointer',
   },
+  modalOverlay: {
+    position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex',
+    justifyContent: 'center', alignItems: 'center', zIndex: 1000,
+  },
+  modalContent: {
+    backgroundColor: '#fff', borderRadius: '12px', width: '90vw',
+    maxWidth: '1000px', height: '90vh', display: 'flex', flexDirection: 'column',
+    overflow: 'hidden',
+  },
+  modalHeader: {
+    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+    padding: '16px 20px', borderBottom: '1px solid #e5e7eb',
+  },
+  modalTitle: { fontWeight: '600', fontSize: '16px', color: '#1a1f36' },
+  modalClose: {
+    background: 'none', border: 'none', fontSize: '18px', fontWeight: '700',
+    color: '#6b7280', cursor: 'pointer', padding: '4px 8px',
+  },
+  modalBody: { flex: 1, overflow: 'auto', padding: '0' },
+  previewImage: { width: '100%', height: 'auto', display: 'block' },
+  previewIframe: { width: '100%', height: '100%', border: 'none' },
   pagination: {
     display: 'flex',
     justifyContent: 'center',
